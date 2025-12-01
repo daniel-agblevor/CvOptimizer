@@ -1,25 +1,25 @@
 # CvOptimizer
 
-> A small toolkit to extract document structure from `.docx` files and optimize CVs to better match job descriptions using Google Generative AI (Gemini).
+> Tools to convert messy CVs into focused, targeted resumes and to generate one-page CVs from templates using Google Generative AI (Gemini).
 
 ## Overview
 
-`CVoptimizer` contains two main utilities:
-- `extract_structure.py` — Analyzes a Word (`.docx`) document and produces a JSON "blueprint" describing paragraphs, tables, runs, styles, and basic metadata.
-- `optimize.py` — Loads a candidate CV `.docx` and a `job_description.txt`, then rewrites meaningful CV text segments using Google Generative AI (Gemini) to better align the CV with the job description.
+`CVoptimizer` contains two primary utilities and a template-driven one-page CV generator:
+- `optimize.py` — Rewrites meaningful CV paragraphs/tables to better match a target `job_description.txt` using Gemini.
+- `OnePage.py` — A template-driven builder that condenses and formats candidate information into a strict one-page CV using a `.docx` template with `{{PLACEHOLDERS}}`.
 
-These tools are intended as a developer-focused starting point for programmatically improving or analyzing CV documents.
+This repository is a developer-focused starting point for programmatic CV improvement and template-based one-page CV generation.
 
 ## Features
 
-- Extracts paragraph and table structure, run-level formatting, and document metadata into JSON (`extract_structure.py`).
 - Rewrites paragraph and table text segments while attempting to preserve simple formatting (`optimize.py`).
+- Builds a strict one-page CV from a `.docx` template with placeholders (`OnePage.py`).
 - Simple, readable code you can adapt for other document processing workflows.
 
 ## Requirements
 
 - Python 3.8+
-- Dependencies listed in `requirements.txt`
+- Dependencies are pinned in `requirements.txt` (use the included file to reproduce the environment).
 
 Install dependencies using the provided `requirements.txt`:
 
@@ -27,7 +27,7 @@ Install dependencies using the provided `requirements.txt`:
 python -m pip install -r requirements.txt
 ```
 
-Or optionally create and activate a virtual environment first:
+Optionally create and activate a virtual environment first:
 
 ```powershell
 python -m venv .venv
@@ -36,10 +36,10 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-**Key dependencies:**
-- `python-docx` (1.2.0) — for reading and writing `.docx` files
-- `google-generativeai` (0.8.5) — Google Generative AI / Gemini client
-- `python-decouple` (3.8) — environment variable management
+**Key dependencies (examples from `requirements.txt`):**
+- `python-docx` — for reading and writing `.docx` files
+- `google-generativeai` / `google-ai-generativelanguage` — Google Generative AI (Gemini) client libraries
+- `python-decouple` — environment variable management
 
 ## Configuration
 
@@ -61,34 +61,25 @@ CVoptimizer/
 ├── .env                    # Environment variables (not committed; add your GOOGLE_API_KEY here)
 ├── .gitignore              # Excludes .env, sample files, and venv from git
 ├── CandidateCV.docx        # Input: Candidate CV document to optimize
-├── OptimizedCV.docx        # Output: Result of optimization
-├── extract_structure.py    # Utility to extract document structure to JSON
-├── optimize.py             # Main CV optimization script
+├── Final_OnePage_CV.docx   # Output: One-page CV produced from template (example)
+├── OptimizedCV.docx        # Output: Result of `optimize.py`
+├── OnePage.py              # Template-driven one-page CV generator
+├── optimize.py             # CV rewriting script using Gemini
+├── Standard.docx           # Template with `{{PLACEHOLDERS}}` used by `OnePage.py`
 ├── job_description.txt     # Input: Target job description for context
 ├── requirements.txt        # Pinned dependencies
 ├── README.md               # This file
 └── venv/                   # Virtual environment (not committed)
 ```
 
-### Extract Document Structure
+### Optimize a CV (rewrite to match a Job Description)
 
-To analyze the structure of a Word document and produce a JSON blueprint:
-
-```powershell
-python extract_structure.py
-```
-
-- If no input file is specified, the script creates a sample `test_doc.docx` automatically.
-- Output: `blueprint.json` containing document metadata, sections, paragraphs, tables, and formatting details.
-
-### Optimize a CV
-
-To optimize a CV document to better match a job description:
+To optimize an existing CV so its language and keywords better match a target job description:
 
 1. **Prepare input files:**
-   - Place your candidate CV as `CandidateCV.docx` in the project root.
-   - Ensure `job_description.txt` contains the target job description (a sample is included).
-   - Set `GOOGLE_API_KEY` in your `.env` file.
+  - Place your candidate CV as `CandidateCV.docx` in the project root.
+  - Ensure `job_description.txt` contains the target job description (a sample is included).
+  - Set `GOOGLE_API_KEY` in your `.env` file.
 
 2. **Run the optimizer:**
 
@@ -96,63 +87,48 @@ To optimize a CV document to better match a job description:
 python optimize.py
 ```
 
-- The script processes all meaningful text segments in paragraphs and tables.
-- Output: `OptimizedCV.docx` with rewritten content aligned to the job description.
+- The script processes meaningful paragraphs and table cells, rewrites them with Gemini, and saves `OptimizedCV.docx`.
 
-### Programmatic Usage
+### Generate a One-Page CV from a Template (`OnePage.py`)
 
-Import and use the classes directly in your own code:
+`OnePage.py` converts a candidate's raw CV into a clean, template-driven one-page resume. The template should contain `{{PLACEHOLDERS}}` for fields like `NAME`, `LINKEDIN`, and repeated job blocks such as `JOB1_TITLE`, `JOB1_COMPANY`, `JOB1_DATE`, `JOB1_DESC`, etc.
 
-```python
-from optimize import CVoptimizer
-from extract_structure import DocxBlueprintExtractor
-from decouple import config
+1. **Prepare files:**
+  - Put the template (e.g., `Standard.docx`) in the repo and ensure placeholders follow the `{{KEY}}` pattern. The template in this repo is `Standard.docx`.
+  - Place your candidate file as `CandidateCV.docx`.
+  - Ensure `GOOGLE_API_KEY` is set in `.env`.
 
-# Extract document structure
-extractor = DocxBlueprintExtractor("input_document.docx")
-blueprint = extractor.extract()
-extractor.save_json("output_blueprint.json")
+2. **Run the OnePage builder:**
 
-# Optimize a CV
-api_key = config('GOOGLE_API_KEY')
-optimizer = CVoptimizer(
-    api_key=api_key,
-    jd_path='job_description.txt',
-    cv_path='CandidateCV.docx',
-    output_path='OptimizedCV.docx'
-)
-optimizer.process()
+```powershell
+python OnePage.py
 ```
+
+- Output: `Final_OnePage_CV.docx` (or the filename set in `OnePage.py`).
+- The builder:
+  - Extracts the candidate's raw text,
+  - Uses Gemini to return a structured JSON matching the template schema (e.g., static fields and an `EXPERIENCE` array),
+  - Injects values into the template, formats job descriptions as bullets, and removes unused placeholders to keep the layout clean.
 
 ## File Descriptions
 
-### `extract_structure.py`
-
-Provides the `DocxBlueprintExtractor` class for analyzing Word documents:
-- Reads a `.docx` file and extracts its complete structure.
-- **Metadata:** Author, created/modified timestamps, revision count.
-- **Sections:** Page dimensions, orientation, margins.
-- **Content:** Paragraphs, tables, runs, styles, alignment, and font properties.
-- **Methods:**
-  - `extract()` — Returns a blueprint dictionary.
-  - `save_json(output_path)` — Persists the blueprint as JSON.
-
 ### `optimize.py`
 
-Provides the `CVoptimizer` class for rewriting CVs using Gemini:
-- Loads a CV document and a job description.
-- Identifies meaningful text segments (filters out short headers, names, dates).
-- Sends each segment to Google Generative AI (Gemini) with the job description as context.
-- Rewrites content to align with the JD while preserving facts.
-- Attempts to preserve basic formatting (font size, bold/italic/underline).
-- **Methods:**
-  - `process()` — Optimizes the CV in-place and saves to output file.
+Rewrites CV text segments using Gemini to better match a provided `job_description.txt`:
+- Filters out very short lines (names, dates) to avoid hallucination and reduce token usage.
+- Replaces paragraph/table text while attempting to preserve basic paragraph-level formatting.
+- Default model: `gemini-2.5-pro` (configurable in the file).
 
-**Environment variable:** `GOOGLE_API_KEY` (required)
+### `OnePage.py`
+
+Template-driven one-page CV builder:
+- Detects `{{PLACEHOLDERS}}` from the template and builds a schema for the AI to return structured JSON.
+- Produces a compact, punchy one-page CV by limiting experience entries and formatting job bullets.
+- Default model: `gemini-2.5-flash` (configurable in the file).
 
 ### `job_description.txt`
 
-Plain-text file containing the target job description. Used as context for CV rewriting. The included sample is a Financial Analyst role at Canonical.
+Plain-text file containing the target job description. Used as context by `optimize.py`.
 
 ## Design Notes & Limitations
 
@@ -173,25 +149,33 @@ Plain-text file containing the target job description. Used as context for CV re
 
 ## Contributing
 
-Suggestions and improvements are welcome. Potential enhancements:
-- Add `argparse` CLI with flags for `--cv`, `--jd`, `--out`, `--model`, `--dry-run`.
-- Implement advanced run-level formatting preservation to maintain mixed inline styles.
-- Add unit tests for parsing and replacement logic.
-- Add a `--diff` mode showing side-by-side comparisons before/after.
-- Support additional document formats (`.pdf`, `.odt`, etc.).
-- Add logging for API calls and performance metrics.
+Contributions welcome. Ideas:
+- Add an `argparse` CLI for both scripts (`optimize.py` and `OnePage.py`).
+- Add unit tests to validate placeholder detection and JSON parsing from the AI.
+- Implement finer-grained run-level style re-application when replacing paragraph text.
+- Add an optional `--dry-run` / `--diff` output to preview changes.
 
-## Support & Issues
+## Support & Troubleshooting
 
-- **File not found errors:** Verify that `.docx` files exist and paths are correct.
-- **API errors:** Ensure `GOOGLE_API_KEY` is set correctly and your API quota is active.
-- **Network issues:** Confirm outbound connectivity to Google's generative AI API.
-- **Formatting issues:** Complex inline styles may be simplified; this is a known limitation.
+- **File not found errors:** Verify input files exist (`CandidateCV.docx`, `Standard.docx`, etc.).
+- **API errors / authentication failures:** Ensure `GOOGLE_API_KEY` is present in `.env` and valid.
+- **Unexpected AI output / parsing errors:** The scripts expect the AI to return clean JSON (OnePage) or plain text (optimize). If parsing fails, inspect the raw response and adjust prompt/validation.
+- **Formatting issues:** Complex inline styling may be simplified during replacement; templates should be designed to be resilient to paragraph-level changes.
 
 ---
 
-**Next steps:**
-- Obtain a Google Generative AI API key from [Google AI Studio](https://aistudio.google.com).
-- Create a `.env` file with your key.
-- Add your CV (`CandidateCV.docx`) and target job description.
-- Run `python optimize.py` to start optimizing.
+**Quick start:**
+1. Obtain a Google Generative AI API key and add `GOOGLE_API_KEY` to `.env`.
+2. Install dependencies: `python -m pip install -r requirements.txt`.
+3. Place `CandidateCV.docx` and (for one-page) `Standard.docx` in the repo.
+4. Run either:
+
+```powershell
+python optimize.py   # Rewrite CV fragments to match a job description
+python OnePage.py    # Generate a one-page CV from a template
+```
+
+If you'd like, I can next:
+- Add a small CLI wrapper to `OnePage.py` and `optimize.py` to accept `--cv`, `--template`, `--jd`, `--out`, and `--model` flags,
+- Add a `--dry-run` diff mode,
+- Or run a quick local sanity run (you must have `CandidateCV.docx`, `Standard.docx`, and a valid `GOOGLE_API_KEY`).
