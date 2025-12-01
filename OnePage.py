@@ -1,31 +1,35 @@
 import os
 import json
 import re
+import logging
 from decouple import config
 import google.generativeai as genai
 from docx import Document
 from docx.text.paragraph import Paragraph
-from docx.table import Table
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class OnePageCVBuilder:
-    # Fields that require specific array handling (like multiple jobs)
-    DYNAMIC_ARRAY_FIELDS = ["EXPERIENCE"]
-    
-    # Fields that require special formatting (like bullet points)
-    SPECIAL_FORMATTING_FIELDS = ["JOB_DESC"]
+    # Fields that typically require bullet point formatting
+    BULLET_POINT_SUFFIXES = ["_DESC", "_ACHIEVEMENTS", "_RESPONSIBILITIES", "_DETAILS"]
 
     def __init__(self, api_key, template_path, output_path="Final_OnePage_CV.docx"):
+        logging.info("Initializing OnePageCVBuilder...")
         self.template_path = template_path
         self.output_path = output_path
         
         # Configure Gemini
+        logging.info("Configuring Gemini API...")
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.5-flash')
         
-        # 3. Read Template Placeholders and Build Dynamic Schema
+        # 1. Analyze Template to Build Schema
+        logging.info(f"Analyzing template: {template_path}")
         self.all_blocks = self._get_all_blocks(template_path)
-        self.static_placeholders, self.dynamic_placeholders = self._get_placeholders_from_template()
+        self.static_placeholders, self.dynamic_sections = self._parse_template_structure()
         self.schema_guidelines = self._build_dynamic_schema()
+        logging.info("Template analysis complete.")
 
     def _get_all_blocks(self, file_path):
         """Helper to get all paragraphs, including those in tables."""
@@ -37,54 +41,82 @@ class OnePageCVBuilder:
                     all_blocks.extend(cell.paragraphs)
         return all_blocks
     
-    def _get_placeholders_from_template(self):
-        """Scans the template to find all unique placeholders."""
-        static = set()
-        dynamic = set()
+    def _parse_template_structure(self):
+        """
+        Scans the template for:
+        1. Static fields: {{NAME}}, {{SUMMARY}}
+        2. Dynamic repeatable sections: {{JOB1_TITLE}}, {{CERT2_NAME}}
+        
+        Returns:
+            static_set: Set of static keys.
+            dynamic_map: Dictionary defining repeatable sections.
+                e.g., {'JOB': {'max_index': 4, 'fields': {'TITLE', 'COMPANY'}}}
+        """
+        static_set = set()
+        dynamic_map = {} # {PREFIX: {max_index: int, fields: set}}
         
         for block in self.all_blocks:
-            # Find all {{KEY}} patterns
-            placeholders = re.findall(r"\{\{([A-Z_]+)\}\}", block.text)
-            for key in placeholders:
-                # Differentiate between indexed job fields (JOB1_TITLE) and static fields (NAME)
-                if re.match(r"JOB[1-4]_[A-Z_]+", key):
-                    # We only care about the base job fields for dynamic handling
-                    base_key = re.sub(r"JOB[1-4]_", "JOB_", key)
-                    dynamic.add(base_key)
-                elif key not in self.DYNAMIC_ARRAY_FIELDS:
-                    static.add(key)
+            # Find all potential keys inside {{...}}
+            # We look for simple {{KEY}} or indexed {{PREFIX#_KEY}}
+            matches = re.findall(r"\{\{([A-Z0-9_]+)\}\}", block.text)
+            
+            for full_key in matches:
+                # Regex to detect indexed patterns like JOB1_TITLE or CERT2_DATE
+                # Group 1: Prefix (JOB), Group 2: Index (1), Group 3: Field (TITLE)
+                indexed_match = re.match(r"^([A-Z]+)(\d+)_([A-Z_]+)$", full_key)
+                
+                if indexed_match:
+                    prefix, index, field = indexed_match.groups()
+                    index = int(index)
+                    
+                    if prefix not in dynamic_map:
+                        dynamic_map[prefix] = {'max_index': 0, 'fields': set()}
+                    
+                    # Update max index found (to know how many slots the template has)
+                    dynamic_map[prefix]['max_index'] = max(dynamic_map[prefix]['max_index'], index)
+                    dynamic_map[prefix]['fields'].add(field)
+                else:
+                    # It's a static field like NAME, EMAIL, SKILLS
+                    static_set.add(full_key)
         
-        return list(static), list(dynamic)
+        return list(static_set), dynamic_map
 
     def _build_dynamic_schema(self):
-        """Creates the schema guidelines for the AI based on detected placeholders."""
+        """Creates a tailored JSON schema for the AI based on the specific template structure."""
         schema = {}
         
-        # 1. Build Static Fields Schema
+        # 1. Define Static Fields
         for key in self.static_placeholders:
-            # Add a generic description, could be enhanced with manual mapping if needed
-            schema[key] = {"description": f"Candidate's content for the {key} field. Ensure it is concise and relevant."}
+            schema[key] = {"type": "string", "description": f"Content for {key}. If not found, return empty string."}
         
-        # 2. Add Dynamic Array Fields (e.g., EXPERIENCE)
-        if self.dynamic_placeholders:
-            # Define the structure for the EXPERIENCE array dynamically
-            job_structure = {key.replace("JOB_", ""): {"type": "string"} for key in self.dynamic_placeholders}
+        # 2. Define Dynamic Array Fields
+        for prefix, meta in self.dynamic_sections.items():
+            field_structure = {field: {"type": "string"} for field in meta['fields']}
             
-            schema["EXPERIENCE"] = {
-                "description": "Array containing the 3-4 most relevant job experiences. Each job must be an object with the following keys:",
-                "example_structure": job_structure
+            description = f"List of dictionaries for {prefix} (e.g., Work Experience, Certificates). " \
+                          f"Extract the most relevant items."
+            
+            # Special instruction for commonly known sections
+            if prefix == "JOB" or prefix == "EXP":
+                description += " Limit to 3-4 most relevant roles. Use active verbs."
+            
+            schema[prefix] = {
+                "type": "array",
+                "description": description,
+                "items": {
+                    "type": "object",
+                    "properties": field_structure
+                }
             }
         
         return schema
 
-
     def extract_text_from_candidate(self, file_path):
-        """Simple extractor for DOCX. Can be expanded for PDF."""
+        """Simple extractor for DOCX."""
         doc = Document(file_path)
         full_text = []
         for para in doc.paragraphs:
             full_text.append(para.text)
-        # Also grab table text
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -92,145 +124,139 @@ class OnePageCVBuilder:
         return "\n".join(full_text)
 
     def optimize_content(self, raw_text):
-        """Uses Gemini to structure and condense the CV into a dynamic schema."""
-        print("--- Optimizing content with Gemini... ---")
+        """Uses Gemini to generate structured data matching the template."""
+        logging.info("Extracting and structuring data with Gemini...")
         
-        # Build a clear JSON object defining the expected output structure for the AI
-        required_json_keys = self.static_placeholders.copy()
-        if "EXPERIENCE" in self.schema_guidelines:
-            required_json_keys.append("EXPERIENCE")
+        # Keys the AI must generate
+        expected_keys = self.static_placeholders + list(self.dynamic_sections.keys())
 
         prompt = f"""
-        You are an expert CV writer. Your goal is to rewrite the candidate's CV to fit a STRICT ONE-PAGE layout.
+        You are an expert CV parser and writer.
         
-        INSTRUCTIONS:
-        1. Extract and rewrite details based on the schema derived from the template placeholders.
-        2. Strictly limit the EXPERIENCE array to the 4 most relevant jobs.
-        3. Rewrite descriptions to be punchy, using active verbs (e.g., "Led," "Developed," "Optimized").
-        4. Job descriptions (JOB_DESC) must be 3-5 bullet points. Use newline characters (\\n) to separate bullets within the JOB_DESC string.
-        5. Output ONLY valid JSON. If a piece of information is missing (e.g., LINKEDIN), return an empty string "" for that key.
+        TASK:
+        1. Parse the RAW CANDIDATE CV text below.
+        2. Map the content to the required JSON schema structure defined by the template placeholders.
+        3. For Array fields (like JOB, CERT), return a list of objects.
+        4. Use concise, professional language.
+        5. For description fields (ending in _DESC or _ACHIEVEMENTS), use 3-5 bullet points separated by newlines (\\n).
+        6. If a field is missing in the CV, return an empty string "" or empty list [].
         
         RAW CANDIDATE TEXT:
-        {raw_text[:8000]}
+        {raw_text[:10000]}
         
-        SCHEMA DEFINITIONS (Derived from Template):
+        REQUIRED SCHEMA (Target Structure):
         {json.dumps(self.schema_guidelines, indent=2)}
         
-        REQUIRED JSON OUTPUT FORMAT:
-        Return a single flat JSON object containing ONLY the keys: {required_json_keys}.
+        OUTPUT FORMAT:
+        Return a single valid JSON object with keys: {expected_keys}
         """
         
         response = self.model.generate_content(prompt)
-        json_str = response.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(json_str)
+        try:
+            json_str = response.text.replace('```json', '').replace('```', '').strip()
+            logging.info(f"AI Output Preview: {json_str[:200]}...")
+            logging.info("Successfully extracted structured data from Gemini.")
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            logging.error(f"AI did not return valid JSON. Full response: {response.text}")
+            return {}
 
     def _replace_text_preserve_style(self, element, placeholder, new_text):
         """Replaces placeholder in a paragraph or run while preserving style."""
         if isinstance(element, Paragraph) and placeholder in element.text:
-            
+            # Attempt to replace within runs to keep bold/italic/color
             for run in element.runs:
                 if placeholder in run.text:
                     run.text = run.text.replace(placeholder, new_text)
                     return
-            
-            # Fallback for complex run splits 
-            if placeholder in element.text:
-                element.text = element.text.replace(placeholder, new_text)
+            # Fallback
+            element.text = element.text.replace(placeholder, new_text)
+
+    def _format_bullet_points(self, text):
+        """Helper to format text as visual bullet points."""
+        if not text:
+            return ""
+        # If it already looks like a list, strictly format it
+        formatted = text.replace('\n', '\n• ')
+        if not formatted.startswith('• '):
+            formatted = '• ' + formatted
+        return formatted
 
     def generate_document(self, candidate_path):
-        
-        # 1 & 2. Get Content & Optimize (Uses self.schema_guidelines)
+        # 1. Ingest
         raw_text = self.extract_text_from_candidate(candidate_path)
+        
+        # 2. Structure
         data_map = self.optimize_content(raw_text)
         
-        # 3. Load Template & Get Blocks
-        print(f"--- Loading template: {self.template_path} ---")
+        # 3. Load Template
+        logging.info(f"--- Loading template: {self.template_path} ---")
         doc = Document(self.template_path)
-        all_blocks_to_modify = self._get_all_blocks(self.template_path) # Reload blocks from doc object
         
-        print("--- Injecting optimized data with comprehensive cleanup... ---")
+        # Reload blocks from the fresh doc object for modification
+        all_blocks_to_modify = self._get_all_blocks(self.template_path)
         
-        # Extract dynamic job data before proceeding
-        experience_array = data_map.pop("EXPERIENCE", [])
-        
-        # 4.1 Inject Static Fields (including new fields like PROJECTS) and clean up if missing
-        print(f"Injecting {len(self.static_placeholders)} static and new fields...")
-        for block in all_blocks_to_modify:
-            for key in self.static_placeholders:
-                value = data_map.get(key, "")
-                placeholder = f"{{{{{key}}}}}"
-                
+        logging.info("--- Injecting data... ---")
+
+        # --- PHASE 1: STATIC FIELDS ---
+        for key in self.static_placeholders:
+            placeholder = f"{{{{{key}}}}}"
+            value = data_map.get(key, "")
+            
+            for block in all_blocks_to_modify:
                 if placeholder in block.text:
-                    # --- CRITICAL CLEANUP FOR STATIC FIELDS ---
-                    # If the AI returns an empty value for this field, clear the entire paragraph.
                     if not value and isinstance(block, Paragraph):
-                        block.clear()
-                        continue
-                    
-                    # Normal replacement if data exists
-                    self._replace_text_preserve_style(block, placeholder, value)
+                        block.clear() # Cleanup empty static fields
+                    else:
+                        self._replace_text_preserve_style(block, placeholder, str(value))
 
-        # 4.2 Inject Dynamic Fields (Experience) - Using a loop that depends on array size
-        print(f"Injecting {len(experience_array)} job entries...")
-        max_jobs_injected = 0
-        
-        for i, job in enumerate(experience_array):
-            if i >= 4:
-                break # Still limiting to 4 jobs for one-page CV constraint
+        # --- PHASE 2: DYNAMIC REPEATABLE SECTIONS ---
+        # Iterate over every detected dynamic section type (JOB, CERT, PROJ, etc.)
+        for prefix, meta in self.dynamic_sections.items():
+            section_data = data_map.get(prefix, []) # Get list of dicts from AI (e.g., list of jobs)
+            max_slots = meta['max_index']
             
-            max_jobs_injected = i + 1
-            job_index = i + 1
-            
-            # Find and inject into all blocks
-            for block in all_blocks_to_modify:
-                # Inject all fields found in the dynamic structure (TITLE, COMPANY, DATE, DESC, etc.)
-                for base_field in self.dynamic_placeholders:
-                    field = base_field.replace("JOB_", "")
-                    key_name = f"JOB{job_index}_{field}"
-                    placeholder = f"{{{{{key_name}}}}}"
+            logging.info(f"Processing section '{prefix}': Found {len(section_data)} items for {max_slots} slots.")
+
+            # Iterate through the template slots (1 to max_slots)
+            for i in range(1, max_slots + 1):
+                item_data = section_data[i-1] if i <= len(section_data) else {}
+                
+                # For every field known to this section (TITLE, COMPANY, etc.)
+                for field in meta['fields']:
+                    # Construct the specific placeholder: {{JOB1_TITLE}}
+                    placeholder = f"{{{{{prefix}{i}_{field}}}}}"
                     
-                    if placeholder in block.text:
-                        value = job.get(field, "")
+                    # Extract value from the AI dictionary
+                    value = item_data.get(field, "")
+                    
+                    # Apply bullet formatting if applicable
+                    if any(field.endswith(suffix) for suffix in self.BULLET_POINT_SUFFIXES):
+                         value = self._format_bullet_points(value)
 
-                        # Apply special formatting (e.g., bullets for JOB_DESC)
-                        if field in self.SPECIAL_FORMATTING_FIELDS:
-                            bullets = value.replace('\n', '\n• ')
-                            if bullets and not bullets.startswith('• '):
-                                bullets = '• ' + bullets
-                            value = bullets
-                        
-                        self._replace_text_preserve_style(block, placeholder, value)
+                    # Scan document to find and replace
+                    for block in all_blocks_to_modify:
+                        if placeholder in block.text:
+                            if not value and isinstance(block, Paragraph):
+                                # CLEANUP: If this slot is unused (e.g., Job 3 when only 2 exist), clear it
+                                block.clear()
+                            else:
+                                self._replace_text_preserve_style(block, placeholder, str(value))
 
-        # 4.3 Cleanup: Remove remaining job placeholders if not all 4 slots were used
-        # This loop iterates through any slots that were NOT filled (e.g., Job 3 and Job 4 if only 2 jobs were returned)
-        print("Cleaning up unused placeholders...")
-        for job_index in range(max_jobs_injected + 1, 5): # Check for slots 1 to 4
-            for block in all_blocks_to_modify:
-                for base_field in self.dynamic_placeholders:
-                    field = base_field.replace("JOB_", "")
-                    key_name = f"JOB{job_index}_{field}"
-                    placeholder = f"{{{{{key_name}}}}}"
-                    if placeholder in block.text:
-                        # Clear the entire paragraph/block to remove the unused section
-                        if isinstance(block, Paragraph):
-                             block.clear()
-        
-        # 5. Save
+        # 4. Save
         doc.save(self.output_path)
-        print(f"--- Complete! Optimized CV saved as {self.output_path} ---")
+        logging.info(f"--- Document generated: {self.output_path} ---")
 
-# --- Execution ---
 if __name__ == "__main__":
     # CONFIGURATION
-    API_KEY = config("GOOGLE_API_KEY")
-    CANDIDATE_FILE = "CandidateCV.docx" # The messy input
-    TEMPLATE_FILE = "Standard.docx" # The pretty template with {{PLACEHOLDERS}}
+    API_KEY = config("GOOGLE_API_KEY") 
+    CANDIDATE_FILE = "CandidateCV.docx"
+    TEMPLATE_FILE = "Standard.docx"
     
-    # Create dummy files for testing if they don't exist
-    if not os.path.exists(CANDIDATE_FILE):
-        print("Please provide a candidate file.")
-    elif not os.path.exists(TEMPLATE_FILE):
-        print("Please provide the Standard.docx template with placeholders.")
-    else:
+    if os.path.exists(CANDIDATE_FILE) and os.path.exists(TEMPLATE_FILE):
+        logging.info("Starting CV generation process...")
         builder = OnePageCVBuilder(API_KEY, TEMPLATE_FILE)
         builder.generate_document(CANDIDATE_FILE)
+        logging.info("CV generation process finished.")
+    else:
+        logging.error("Please ensure candidate and template files exist.")

@@ -93,24 +93,44 @@ python optimize.py
 
 `OnePage.py` converts a candidate's raw CV into a clean, template-driven one-page resume. The template should contain `{{PLACEHOLDERS}}` for fields like `NAME`, `LINKEDIN`, and repeated job blocks such as `JOB1_TITLE`, `JOB1_COMPANY`, `JOB1_DATE`, `JOB1_DESC`, etc.
 
-1. **Prepare files:**
-  - Put the template (e.g., `Standard.docx`) in the repo and ensure placeholders follow the `{{KEY}}` pattern. The template in this repo is `Standard.docx`.
-  - Place your candidate file as `CandidateCV.docx`.
-  - Ensure `GOOGLE_API_KEY` is set in `.env`.
+1.  **Prepare files:**
+    *   Put the template (e.g., `Standard.docx`) in the repo and ensure placeholders follow the `{{KEY}}` pattern. The template in this repo is `Standard.docx`.
+    *   Place your candidate file as `CandidateCV.docx`.
+    *   Ensure `GOOGLE_API_KEY` is set in `.env`.
 
-2. **Run the OnePage builder:**
+2.  **Run the OnePage builder:**
+
+    ```powershell
+    python OnePage.py
+    ```
+
+    *   Output: `Final_OnePage_CV.docx` (or the filename set in `OnePage.py`).
+    *   The builder:
+        *   Extracts the candidate's raw text,
+        *   Uses Gemini to return a structured JSON matching the template schema (e.g., static fields and an `EXPERIENCE` array),
+        *   Injects values into the template, formats job descriptions as bullets, and removes unused placeholders to keep the layout clean.
+
+#### New: Dry Run Mode
+
+To inspect the AI's JSON output without generating a document, use the `--dry-run` flag. This is useful for debugging the AI's interpretation of the candidate CV.
 
 ```powershell
-python OnePage.py
+python OnePage.py --dry-run
 ```
 
-- Output: `Final_OnePage_CV.docx` (or the filename set in `OnePage.py`).
-- The builder:
-  - Extracts the candidate's raw text,
-  - Uses Gemini to return a structured JSON matching the template schema (e.g., static fields and an `EXPERIENCE` array),
-  - Injects values into the template, formats job descriptions as bullets, and removes unused placeholders to keep the layout clean.
+This will print the structured JSON data to the console and exit.
 
-## File Descriptions
+#### CLI Arguments for `OnePage.py`
+
+You can also override the default file paths:
+*   `--candidate`: Path to the source CV (default: `CandidateCV.docx`)
+*   `--template`: Path to the template (default: `Standard.docx`)
+*   `--output`: Path for the generated CV (default: `Final_OnePage_CV.docx`)
+
+Example:
+```powershell
+python OnePage.py --candidate MyCV.docx --template BlueTemplate.docx --output OptimizedBuild.docx
+```## File Descriptions
 
 ### `optimize.py`
 

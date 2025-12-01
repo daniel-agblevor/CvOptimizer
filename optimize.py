@@ -1,26 +1,35 @@
 import os
+import logging
 from decouple import config
 import google.generativeai as genai
 from docx import Document
 from docx.shared import Pt
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 class CvOptimizer:
     def __init__(self, api_key, jd_path, cv_path, output_path="OptimizedCV.docx"):
+        logging.info("Initializing CvOptimizer...")
         self.jd_path = jd_path
         self.cv_path = cv_path
         self.output_path = output_path
         
         # Configure Gemini
+        logging.info("Configuring Gemini API...")
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.5-pro')
         
         # Load Job Description
+        logging.info(f"Loading job description from: {self.jd_path}")
         with open(self.jd_path, 'r', encoding='utf-8') as f:
             self.job_description = f.read()
 
         # Load CV Document Object
         if not os.path.exists(self.cv_path):
+            logging.error(f"CV file not found: {self.cv_path}")
             raise FileNotFoundError(f"CV file not found: {self.cv_path}")
+        logging.info(f"Loading CV from: {self.cv_path}")
         self.doc = Document(self.cv_path)
 
     def _is_meaningful_content(self, text):
@@ -59,9 +68,10 @@ class CvOptimizer:
         try:
             response = self.model.generate_content(prompt)
             cleaned_response = response.text.strip().replace('"', '')
+            logging.info(f"Optimized Text --- Original: '{original_text}' -> Optimized: '{cleaned_response}'")
             return cleaned_response
         except Exception as e:
-            print(f"API Error on segment: {e}")
+            logging.error(f"API Error on segment: {e}")
             return original_text # Fallback to original if API fails
 
     def _replace_paragraph_text(self, paragraph, new_text):
@@ -91,33 +101,34 @@ class CvOptimizer:
         # are flattened here to ensure the new sentence structure flows correctly.
 
     def process(self):
-        print("--- Starting CV Optimization ---")
+        logging.info("--- Starting CV Optimization ---")
         
         # 1. Traverse Document Body (Standard Paragraphs)
         total_paragraphs = len(self.doc.paragraphs)
-        print(f"Processing {total_paragraphs} body paragraphs...")
+        logging.info(f"Processing {total_paragraphs} body paragraphs...")
         
         for i, para in enumerate(self.doc.paragraphs):
             text = para.text.strip()
             if self._is_meaningful_content(text):
-                print(f"Optimizing paragraph {i+1}...")
+                logging.info(f"Optimizing paragraph {i+1}...")
                 optimized_text = self._optimize_text_segment(text)
                 self._replace_paragraph_text(para, optimized_text)
 
         # 2. Traverse Tables (Many CVs use tables for layout)
-        print("Processing tables...")
+        logging.info("Processing tables...")
         for table in self.doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
                         text = para.text.strip()
                         if self._is_meaningful_content(text):
+                            logging.info("Optimizing text in table cell...")
                             optimized_text = self._optimize_text_segment(text)
                             self._replace_paragraph_text(para, optimized_text)
 
         # 3. Save the result
         self.doc.save(self.output_path)
-        print(f"--- Success! Optimized CV saved to {self.output_path} ---")
+        logging.info(f"--- Success! Optimized CV saved to {self.output_path} ---")
 
 # --- Execution ---
 if __name__ == "__main__":
@@ -138,4 +149,4 @@ if __name__ == "__main__":
         )
         optimizer.process()
     except Exception as e:
-        print(f"Error: {e}")
+        logging.error(f"An error occurred during the optimization process: {e}")
