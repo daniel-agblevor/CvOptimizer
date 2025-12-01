@@ -4,7 +4,7 @@ import google.generativeai as genai
 from docx import Document
 from docx.shared import Pt
 
-class CVoptimizer:
+class CvOptimizer:
     def __init__(self, api_key, jd_path, cv_path, output_path="OptimizedCV.docx"):
         self.jd_path = jd_path
         self.cv_path = cv_path
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     API_KEY = config("GOOGLE_API_KEY") # Replace this
     
     try:
-        optimizer = CVoptimizer(
+        optimizer = CvOptimizer(
             api_key=API_KEY,
             jd_path="job_description.txt",
             cv_path="CandidateCV.docx", # Ensure this file exists
